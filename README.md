@@ -34,15 +34,30 @@ Nên dùng Chrome, Edge hoặc Safari bản mới để có giọng đọc tiế
 
 | Part | Nội dung | Số câu |
 |---|---|---|
-| 1 | Mô tả tranh | 6 |
-| 2 | Hỏi – đáp | 20 |
-| 3 | Hội thoại | 12 |
-| 4 | Bài nói ngắn | 9 |
+| 1 | Mô tả tranh – **ảnh chụp thật** (Wikimedia Commons, giấy phép tự do) | 13 |
+| 2 | Hỏi – đáp | 25 |
+| 3 | Hội thoại (có hội thoại **3 người**, câu hỏi **hàm ý**, câu hỏi **biểu đồ**) | 27 |
+| 4 | Bài nói ngắn (có câu hỏi hàm ý, biểu đồ) | 18 |
 | 5 | Hoàn thành câu | 55 |
 | 6 | Hoàn thành đoạn văn | 16 |
 | 7 | Đọc hiểu (đơn/kép, chat, chèn câu, từ đồng nghĩa) | 22 |
 
-Đề TOEIC gốc thuộc bản quyền của ETS, nên các câu hỏi ở đây được **biên soạn mới** theo đúng dạng câu và các chủ điểm hay gặp trong đề những năm gần đây: từ loại, thì, giới từ, liên từ, mệnh đề quan hệ, câu điều kiện/đảo ngữ, collocation, dạng chọn câu điền vào đoạn (Part 6), câu hỏi ý định người viết trong chat, chèn câu, đoạn văn kép (Part 7), câu trả lời gián tiếp (Part 2)…
+### Phần Listening bám theo format thật
+
+Theo mô tả chính thức của ETS/IIBC:
+
+- **Part 1 và 2:** câu mô tả / câu trả lời **không in trong đề**, chỉ được đọc. App chỉ hiện nút (A)(B)(C)(D).
+- **Part 3 và 4:** câu hỏi và đáp án được in; người dẫn đọc lại từng câu hỏi.
+- **Mô phỏng thi thật** (bật trong chế độ thi thử):
+  - mỗi đoạn chỉ phát **1 lần**;
+  - người dẫn đọc *"Number…"* / *"Questions … through … refer to the following conversation"*;
+  - chừa 5 giây (Part 1–2), 8 giây mỗi câu (Part 3–4) hoặc 12 giây với câu hỏi biểu đồ, rồi **tự chuyển**, không quay lại được.
+- **Giọng đọc:** luân phiên giọng Mỹ / Anh / Úc / Canada nếu thiết bị có, nam/nữ đúng vai, và giọng khác nhau cho hội thoại 3 người.
+- **Âm thanh:** dùng giọng đọc tổng hợp của trình duyệt (Web Speech API). Chất lượng phụ thuộc thiết bị. Chrome/Edge trên máy tính, hoặc Safari trên iPhone, thường có giọng tự nhiên nhất.
+
+Nguồn ảnh: xem `assets/p1/CREDITS.md`.
+
+Đề TOEIC gốc (kể cả audio, ảnh) thuộc bản quyền của ETS, nên các câu hỏi ở đây được **biên soạn mới** theo đúng dạng câu và các chủ điểm hay gặp trong đề những năm gần đây.
 
 ### Thêm câu hỏi
 
@@ -52,7 +67,9 @@ Thêm vào `js/data-reading.js` hoặc `js/data-listening.js` theo cấu trúc:
 window.BANK.push({
   id: "p7-99", part: 7,
   passage: "<p>...</p>",                     // Part 6/7
-  script: [{ s: "M", t: "..." }],             // Part 1–4 (M = nam, W = nữ, N = người dẫn)
+  script: [{ s: "M", t: "..." }],             // Part 2–4 (M/M2 = nam, W/W2 = nữ)
+  graphic: "<table class=\"gtable\">…</table>", // Part 3/4: câu hỏi 'Look at the graphic'
+  img: { src: "assets/p1/xx.jpg", credit: {…} }, // Part 1
   questions: [{ q: "Câu hỏi", o: ["A", "B", "C", "D"], a: 1, e: "Giải thích" }]
 });
 ```

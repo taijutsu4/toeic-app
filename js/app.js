@@ -5,16 +5,18 @@
   const BANK = window.BANK || [];
   const $app = document.getElementById("app");
   const LETTERS = ["A", "B", "C", "D"];
+  const asset = p => (window.ASSETS && window.ASSETS[p]) || p;   // build 1 file: ảnh nhúng base64
 
   const PARTS = {
-    1: { name: "Part 1 – Mô tả tranh", skill: "L", instr: "Nghe 4 câu mô tả. Chọn câu mô tả đúng nhất bức tranh." },
-    2: { name: "Part 2 – Hỏi – Đáp", skill: "L", instr: "Nghe một câu hỏi/câu nói và 3 câu trả lời. Chọn câu trả lời phù hợp nhất." },
-    3: { name: "Part 3 – Hội thoại", skill: "L", instr: "Nghe đoạn hội thoại và trả lời 3 câu hỏi." },
-    4: { name: "Part 4 – Bài nói ngắn", skill: "L", instr: "Nghe bài nói ngắn và trả lời 3 câu hỏi." },
+    1: { name: "Part 1 – Mô tả tranh", skill: "L", instr: "Nhìn ảnh, nghe 4 câu mô tả (không in trong đề). Chọn câu mô tả đúng nhất." },
+    2: { name: "Part 2 – Hỏi – Đáp", skill: "L", instr: "Nghe một câu hỏi/câu nói và 3 câu trả lời (không in trong đề). Chọn câu trả lời phù hợp nhất." },
+    3: { name: "Part 3 – Hội thoại", skill: "L", instr: "Nghe đoạn hội thoại (2–3 người) rồi trả lời 3 câu hỏi in trong đề." },
+    4: { name: "Part 4 – Bài nói ngắn", skill: "L", instr: "Nghe bài nói của một người rồi trả lời 3 câu hỏi in trong đề." },
     5: { name: "Part 5 – Hoàn thành câu", skill: "R", instr: "Chọn từ/cụm từ phù hợp nhất để hoàn thành câu." },
     6: { name: "Part 6 – Hoàn thành đoạn văn", skill: "R", instr: "Chọn đáp án phù hợp nhất cho mỗi chỗ trống trong đoạn văn." },
     7: { name: "Part 7 – Đọc hiểu", skill: "R", instr: "Đọc văn bản và trả lời các câu hỏi." }
   };
+  const isL = g => PARTS[g.part].skill === "L";
 
   /* ---------------- Storage ---------------- */
   const store = {
@@ -37,59 +39,144 @@
   const countQ = groups => groups.reduce((n, g) => n + g.questions.length, 0);
   const byPart = p => BANK.filter(g => g.part === p);
   const qKey = (g, i) => g.id + "#" + (g.questions[i] && g.questions[i]._orig !== undefined ? g.questions[i]._orig : i);
+  const hash = s => { let h = 0; for (const c of s) h = (h * 31 + c.charCodeAt(0)) >>> 0; return h; };
 
-  /* ---------------- Text-to-speech ---------------- */
+  // Tách câu để đọc lần lượt; không tách sau chữ viết tắt (Mr., Dr., A.M.), chữ cái đơn (A.) hay số (7.)
+  function splitSentences(text) {
+    const out = [];
+    let cur = "";
+    const parts = text.split(/(?<=[.!?]["']?)\s+/);
+    parts.forEach(w => {
+      cur = cur ? cur + " " + w : w;
+      const last = cur.split(/\s+/).pop();
+      const abbr = /^(Mr|Ms|Mrs|Dr|St|No|[A-Z]|\d+|[A-Z]\.[A-Z])\.$/.test(last);
+      if (!abbr) { out.push(cur); cur = ""; }
+    });
+    if (cur) out.push(cur);
+    return out.filter(Boolean);
+  }
+
+  /* ---------------- Text-to-speech ----------------
+   * Đề thật dùng 4 giọng: Mỹ, Anh, Canada, Úc. Ở đây mỗi nhóm câu được gán giọng theo vùng
+   * (nếu thiết bị có), nam/nữ đúng vai, và đọc lần lượt từng câu (tránh lỗi Chrome cắt câu dài). */
+  const ACCENTS = ["en-US", "en-GB", "en-AU", "en-CA"];
+  const FEMALE = /female|woman|zira|samantha|aria|jenny|susan|victoria|karen|moira|tessa|serena|libby|sonia|hazel|natasha|clara|emma|ava|allison|michelle|nicole|kate|catherine|fiona|veena|joanna|salli|kimberly|ivy|amy|olivia|google us english$|google uk english female/i;
+  const MALE = /\bmale\b|\bman\b|david|mark|guy|daniel|alex|fred|george|ryan|tom|thomas|william|james|liam|christopher|eric|brian|matthew|justin|joey|arthur|oliver|google uk english male/i;
   const tts = {
     rate: store.get("rate", 0.9),
     voices: [],
+    token: 0,
+    keep: [],
+    supported: "speechSynthesis" in window,
     load() {
-      if (!("speechSynthesis" in window)) return;
-      const pick = () => { this.voices = speechSynthesis.getVoices().filter(v => /^en(-|_|$)/i.test(v.lang)); };
+      if (!this.supported) return;
+      const pick = () => { this.voices = speechSynthesis.getVoices().filter(v => /^en([-_]|$)/i.test(v.lang)); };
       pick();
       speechSynthesis.onvoiceschanged = pick;
     },
-    voiceFor(s) {
+    gender(v) { return MALE.test(v.name) && !/female/i.test(v.name) ? "M" : FEMALE.test(v.name) ? "W" : "?"; },
+    // Chọn giọng cho một "vai" trong một nhóm câu. Các vai khác nhau cố gắng dùng giọng khác nhau.
+    cast(roles, seed) {
+      const map = {}, used = new Set();
       const v = this.voices;
-      if (!v.length) return null;
-      const female = /female|zira|samantha|aria|jenny|susan|victoria|karen|moira|tessa|serena|libby|sonia|hazel|google us english/i;
-      const male = /male|david|mark|guy|daniel|alex|fred|george|ryan|tom|google uk english male/i;
-      const us = v.filter(x => /en[-_]US/i.test(x.lang));
-      const pool = us.length ? us : v;
-      if (s === "W") return pool.find(x => female.test(x.name) && !/\bmale\b/i.test(x.name)) || pool[0];
-      if (s === "M") return pool.find(x => male.test(x.name) && !/female/i.test(x.name)) || pool[1] || pool[0];
-      return v.find(x => /en[-_]GB|en[-_]AU/i.test(x.lang)) || pool[0];
-    },
-    play(lines, onEnd) {
-      if (!("speechSynthesis" in window)) { alert("Trình duyệt không hỗ trợ đọc giọng nói. Hãy dùng Chrome/Edge/Safari bản mới."); return; }
-      speechSynthesis.cancel();
-      lines.forEach((ln, idx) => {
-        const u = new SpeechSynthesisUtterance(ln.t);
-        u.lang = "en-US"; u.rate = this.rate;
-        const vc = this.voiceFor(ln.s); if (vc) u.voice = vc;
-        if (ln.s === "W" && (!vc || vc === this.voiceFor("M"))) u.pitch = 1.3;
-        if (ln.s === "M" && (!vc || vc === this.voiceFor("W"))) u.pitch = 0.8;
-        if (idx === lines.length - 1 && onEnd) u.onend = onEnd;
-        speechSynthesis.speak(u);
+      roles.forEach((role, i) => {
+        const g = role.gender;
+        const acc = ACCENTS[(seed + i) % ACCENTS.length];
+        const tiers = [
+          x => x.lang.replace("_", "-") === acc && this.gender(x) === g,
+          x => this.gender(x) === g,
+          x => x.lang.replace("_", "-") === acc && this.gender(x) === "?",
+          x => this.gender(x) === "?",
+          () => true
+        ];
+        let voice = null;
+        for (const t of tiers) {
+          const c = v.filter(t);
+          voice = c.find(x => !used.has(x)) || null;
+          if (voice) break;
+        }
+        if (!voice) voice = v.filter(x => this.gender(x) === g)[0] || v[0] || null;
+        if (voice) used.add(voice);
+        // Nếu không tìm được giọng đúng giới tính → chỉnh cao độ cho dễ phân biệt
+        const pitch = voice && this.gender(voice) === g ? 1 : (g === "W" ? 1.35 : 0.75);
+        map[role.key] = { voice, pitch: pitch * (role.alt ? (g === "W" ? 1.08 : 0.92) : 1) };
       });
+      return map;
     },
-    stop() { if ("speechSynthesis" in window) speechSynthesis.cancel(); }
+    // items: [{s, t}] hoặc {pause: ms}; cast: map vai → {voice, pitch}
+    play(items, cast, onEnd) {
+      if (!this.supported) { if (onEnd) setTimeout(onEnd, 300); return false; }
+      this.stop();
+      const my = ++this.token;
+      // tách thành từng câu
+      const seq = [];
+      items.forEach(it => {
+        if (it.pause) { seq.push(it); return; }
+        splitSentences(it.t).forEach(t => seq.push({ s: it.s, t }));
+      });
+      let i = 0;
+      const next = () => {
+        if (my !== this.token) return;
+        if (i >= seq.length) { if (onEnd) onEnd(); return; }
+        const it = seq[i++];
+        if (it.pause) { setTimeout(next, it.pause); return; }
+        const u = new SpeechSynthesisUtterance(it.t);
+        const c = cast[it.s] || cast.N || {};
+        u.lang = c.voice ? c.voice.lang : "en-US";
+        if (c.voice) u.voice = c.voice;
+        u.pitch = c.pitch || 1;
+        u.rate = this.rate;
+        let done = false;
+        const fin = () => { if (done) return; done = true; setTimeout(next, 120); };
+        u.onend = fin; u.onerror = fin;
+        // phòng trường hợp trình duyệt không gọi onend
+        setTimeout(() => { if (!done && my === this.token && !speechSynthesis.speaking) fin(); }, 4000 + it.t.length * 120 / this.rate);
+        this.keep = [u];                        // giữ tham chiếu (bug GC của Chrome)
+        speechSynthesis.speak(u);
+      };
+      next();
+      return true;
+    },
+    stop() { this.token++; if (this.supported) speechSynthesis.cancel(); }
   };
   tts.load();
 
-  function audioLines(g) {
-    const lines = (g.script || []).slice();
-    const q = g.questions[0];
-    if (q.audioOptions) {
-      if (g.part === 2) lines.push({ s: "W", t: "" });
-      q.o.forEach((o, i) => lines.push({ s: g.part === 2 ? "W" : "N", t: LETTERS[i] + ". " + o }));
+  /* Kịch bản phát âm thanh của 1 nhóm câu.
+   * sim = mô phỏng thi thật: có người dẫn đọc số câu, đọc lại câu hỏi Part 3/4 và chừa thời gian trả lời. */
+  function buildAudio(g, firstNum, sim) {
+    const seed = hash(g.id);
+    const items = [];
+    let roles;
+    const q0 = g.questions[0];
+    if (g.part === 1) {
+      const rg = seed % 2 ? "M" : "W";
+      roles = [{ key: "N", gender: "M" }, { key: "R", gender: rg }];
+      if (sim) items.push({ s: "N", t: `Number ${firstNum}. Look at the picture marked number ${firstNum} in your test book.` }, { pause: 600 });
+      q0.o.forEach((o, i) => items.push({ s: "R", t: `${LETTERS[i]}. ${o}` }, { pause: 900 }));
+      if (sim) items.push({ pause: 5000 });
+    } else if (g.part === 2) {
+      const qg = seed % 2 ? "M" : "W";
+      roles = [{ key: "N", gender: "M" }, { key: "Q", gender: qg }, { key: "R", gender: qg === "M" ? "W" : "M" }];
+      if (sim) items.push({ s: "N", t: `Number ${firstNum}.` }, { pause: 400 });
+      items.push(...g.script, { pause: 900 });
+      q0.o.forEach((o, i) => items.push({ s: "R", t: `${LETTERS[i]}. ${o}` }, { pause: 800 }));
+      if (sim) items.push({ pause: 5000 });
+    } else {
+      const sp = [...new Set(g.script.map(l => l.s))];
+      roles = [{ key: "N", gender: "M" }].concat(sp.map(s => ({ key: s, gender: s[0], alt: s.length > 1 })));
+      const last = firstNum + g.questions.length - 1;
+      const kind = g.part === 3 ? (g.speakers === 3 ? "conversation with three speakers" : "conversation") : "talk";
+      if (sim) items.push({ s: "N", t: `Questions ${firstNum} through ${last} refer to the following ${kind}${g.graphic ? " and graphic" : ""}.` }, { pause: 700 });
+      g.script.forEach(l => items.push(l, { pause: 350 }));
+      if (sim) g.questions.forEach((q, i) => items.push({ pause: 900 }, { s: "N", t: `${firstNum + i}. ${q.q}` }, { pause: q.q.startsWith("Look at the graphic") ? 12000 : 8000 }));
     }
-    return lines.filter(l => l.t);
+    return { items, cast: tts.cast(roles, seed) };
   }
 
   /* ---------------- State ---------------- */
   let S = null;        // phiên làm bài hiện tại
   let timerId = null;
-  const settings = Object.assign({ mode: "practice", parts: [1, 2, 3, 4, 5, 6, 7], limit: 30, shuffle: true, minutes: 0 }, store.get("settings", {}));
+  const settings = Object.assign({ mode: "practice", parts: [1, 2, 3, 4, 5, 6, 7], limit: 30, shuffle: true, minutes: 0, sim: true }, store.get("settings", {}));
 
   /* ---------------- Router ---------------- */
   document.addEventListener("click", e => {
@@ -125,13 +212,16 @@
         <div class="modes">
           <button class="mode ${settings.mode === "practice" ? "active" : ""}" data-mode="practice">
             <div class="ico">⚡</div><b>Luyện tập – Chấm ngay</b>
-            <span>Nhấn đáp án là biết đúng/sai ngay, kèm giải thích chi tiết nếu sai. Phù hợp để học.</span>
+            <span>Nhấn đáp án là biết đúng/sai ngay, kèm giải thích chi tiết và transcript. Nghe lại thoải mái.</span>
           </button>
           <button class="mode ${settings.mode === "exam" ? "active" : ""}" data-mode="exam">
             <div class="ico">⏱️</div><b>Thi thử – Chấm khi nộp bài</b>
             <span>Làm hết đề có tính giờ, nộp bài mới chấm. Xem điểm ước tính & giải thích từng câu.</span>
           </button>
         </div>
+        <label class="check sim-opt" style="margin-top:12px"><input type="checkbox" id="sim" ${settings.sim ? "checked" : ""}>
+          <span><b>Mô phỏng phần nghe như thi thật</b> (chế độ thi thử): mỗi đoạn chỉ phát <b>1 lần</b>, có người dẫn đọc số câu và đọc câu hỏi,
+          chừa 5 giây (Part 1–2) / 8 giây mỗi câu (Part 3–4) rồi <b>tự chuyển</b>, không quay lại được.</span></label>
       </section>
 
       <section class="card">
@@ -168,6 +258,10 @@
           </label>
           <label class="check"><input type="checkbox" id="shuffle" ${settings.shuffle ? "checked" : ""}> Xáo trộn câu hỏi</label>
         </div>
+        <div class="row" style="margin-top:12px">
+          <button class="btn ghost small" id="testVoice">🔊 Thử giọng đọc</button>
+          <span class="muted small" id="voiceInfo"></span>
+        </div>
         <div class="row" style="margin-top:18px">
           <button class="btn primary big" id="start">Bắt đầu làm bài →</button>
           <span class="muted small" id="startInfo"></span>
@@ -180,6 +274,14 @@
       const total = countQ(BANK.filter(g => parts.includes(g.part)));
       $app.querySelector("#startInfo").textContent = parts.length ? `Sẽ làm khoảng ${lim ? Math.min(lim, total) : total} câu.` : "Hãy chọn ít nhất 1 part.";
     };
+    const voiceInfo = () => {
+      const el = $app.querySelector("#voiceInfo"); if (!el) return;
+      if (!tts.supported) { el.textContent = "⚠️ Trình duyệt không hỗ trợ đọc giọng nói – phần Listening sẽ không có âm thanh."; return; }
+      const accs = [...new Set(tts.voices.map(v => v.lang.replace("_", "-")))].filter(l => ACCENTS.includes(l));
+      const names = { "en-US": "Mỹ", "en-GB": "Anh", "en-AU": "Úc", "en-CA": "Canada" };
+      el.textContent = tts.voices.length ? `Thiết bị có ${tts.voices.length} giọng tiếng Anh` + (accs.length ? ` (${accs.map(a => names[a]).join(", ")})` : "") + "." : "Đang tải giọng đọc…";
+    };
+    voiceInfo(); setTimeout(voiceInfo, 800);
     info();
     $app.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => {
       settings.mode = b.dataset.mode;
@@ -194,11 +296,17 @@
       info();
     });
     $app.querySelectorAll("input[name=part], #limit").forEach(i => i.onchange = info);
+    $app.querySelector("#testVoice").onclick = () => {
+      tts.rate = +$app.querySelector("#rate").value;
+      const roles = [{ key: "W", gender: "W" }, { key: "M", gender: "M" }];
+      tts.play([{ s: "W", t: "Hello. Welcome to your TOEIC practice test." }, { s: "M", t: "Let's get started." }], tts.cast(roles, Math.floor(Math.random() * 4)));
+    };
     $app.querySelector("#start").onclick = () => {
       settings.parts = [...$app.querySelectorAll("input[name=part]:checked")].map(i => +i.value);
       settings.limit = +$app.querySelector("#limit").value;
       settings.minutes = +$app.querySelector("#minutes").value;
       settings.shuffle = $app.querySelector("#shuffle").checked;
+      settings.sim = $app.querySelector("#sim").checked;
       tts.rate = +$app.querySelector("#rate").value; store.set("rate", tts.rate);
       if (!settings.parts.length) return alert("Hãy chọn ít nhất 1 part.");
       store.set("settings", settings);
@@ -249,10 +357,12 @@
     groups.forEach((g, gi) => g.questions.forEach((q, qi) => flat.push({ g, gi, qi, q, key: qKey(g, qi), num: flat.length + 1 })));
     let seconds = 0;
     if (mode === "exam") {
+      // Đề thật: Listening ≈ 45 phút/100 câu (theo băng), Reading 75 phút/100 câu
       seconds = settings.minutes ? settings.minutes * 60
-        : Math.ceil(flat.reduce((t, f) => t + (PARTS[f.g.part].skill === "L" ? 35 : 45), 0) / 60) * 60; // ≈ 200 câu / 120 phút
+        : Math.ceil(flat.reduce((t, f) => t + (isL(f.g) ? 30 : 45), 0) / 60) * 60;
     }
-    S = { mode, groups, flat, answers: {}, cur: 0, finished: false, seconds, left: seconds, start: Date.now(), label: label || "" };
+    const sim = mode === "exam" && settings.sim && tts.supported;
+    S = { mode, sim, groups, flat, answers: {}, cur: 0, finished: false, seconds, left: seconds, start: Date.now(), label: label || "", heard: {} };
     if (mode === "exam") {
       timerId = setInterval(() => {
         S.left = S.seconds - (Date.now() - S.start) / 1000;
@@ -261,22 +371,47 @@
         if (S.left <= 0) { clearInterval(timerId); alert("Hết giờ! Bài làm sẽ được nộp tự động."); finish(); }
       }, 500);
     }
-    renderQuiz();
+    go(0);
+  }
+
+  const firstNum = gi => S.flat.find(f => f.gi === gi).num;
+  // Trong chế độ mô phỏng: không được quay lại/nhảy tới các nhóm Listening khác
+  const canGoTo = gi => !S.sim || (!isL(S.groups[gi]) && !isL(S.groups[S.cur])) || gi === S.cur;
+
+  function playCurrent() {
+    const g = S.groups[S.cur];
+    if (!isL(g)) return;
+    const gi = S.cur;
+    const { items, cast } = buildAudio(g, firstNum(gi), S.sim);
+    const status = document.getElementById("audioStatus");
+    if (status) status.textContent = "🔊 Đang phát…";
+    tts.play(items, cast, () => {
+      if (!S || S.cur !== gi || S.finished) return;
+      S.heard[gi] = true;
+      if (S.sim) {
+        if (gi < S.groups.length - 1) go(gi + 1); else finish(false);
+      } else {
+        const st = document.getElementById("audioStatus");
+        if (st) st.textContent = "✔ Đã phát xong";
+      }
+    });
   }
 
   function renderQuiz() {
-    tts.stop();
     const g = S.groups[S.cur];
     const exam = S.mode === "exam";
     const answeredN = Object.keys(S.answers).length;
     const P = PARTS[g.part];
-    const first = S.flat.find(f => f.gi === S.cur).num;
+    const first = firstNum(S.cur);
     const revealed = !exam && g.questions.every((_, i) => S.answers[qKey(g, i)] !== undefined);
     const isLast = S.cur === S.groups.length - 1;
+    const lockNav = S.sim && isL(g);
+    const nextLocked = lockNav;            // đang ở phần nghe mô phỏng → tự chuyển
+    const prevLocked = S.cur === 0 || !canGoTo(S.cur - 1);
 
     $app.innerHTML = `
       <div class="quizbar">
-        <span class="tag ${exam ? "exam" : ""}">${exam ? "⏱️ Thi thử" : "⚡ Luyện tập"}</span>
+        <span class="tag ${exam ? "exam" : ""}">${exam ? (S.sim ? "⏱️ Thi thật (mô phỏng)" : "⏱️ Thi thử") : "⚡ Luyện tập"}</span>
         <div class="progress small">Đã làm ${answeredN}/${S.flat.length} câu${S.label ? " · " + esc(S.label) : ""}
           <div class="bar"><i style="width:${answeredN / S.flat.length * 100}%"></i></div></div>
         ${exam ? `<span class="timer" id="timer">${fmtTime(S.left)}</span>
@@ -287,19 +422,23 @@
       <section class="card">
         <span class="tag">${P.skill === "L" ? "🎧" : "📖"} ${P.name}</span>
         <div class="instr">${P.instr}</div>
-        ${g.scene ? `<div class="scene"><div class="icon">${g.scene.icon}</div><div class="desc">${esc(g.scene.desc)}</div></div>` : ""}
         ${P.skill === "L" ? `<div class="audio">
-            <button class="btn primary" id="play">▶ Nghe</button>
-            <button class="btn ghost" id="stop">■ Dừng</button>
-            <span class="muted small">Có thể nghe lại nhiều lần. Phím tắt: <kbd>Space</kbd></span>
+            ${S.sim ? `<span class="tag exam">Chỉ phát 1 lần – tự chuyển câu khi hết thời gian</span>`
+                    : `<button class="btn primary" id="play">▶ Nghe${S.heard[S.cur] ? " lại" : ""}</button>
+                       <button class="btn ghost" id="stop">■ Dừng</button>`}
+            <span class="muted small" id="audioStatus"></span>
           </div>` : ""}
+        ${g.img ? `<figure class="photo"><img src="${esc(asset(g.img.src))}" alt="Ảnh Part 1" loading="eager">
+            <figcaption>Ảnh: ${esc(g.img.credit.artist)} · ${esc(g.img.credit.license)} · <a href="${esc(g.img.credit.link)}" target="_blank" rel="noopener">Wikimedia Commons</a></figcaption></figure>` : ""}
         <div id="transcript"></div>
+        ${g.graphic ? `<div class="graphic">${g.graphic}</div>` : ""}
         ${g.passage ? `<div class="passage">${g.passage}</div>` : ""}
         <div id="qs">${g.questions.map((q, i) => renderQuestion(g, i, first + i)).join("")}</div>
         <div class="navrow">
-          <button class="btn" id="prev" ${S.cur === 0 ? "disabled" : ""}>← Trước</button>
-          ${isLast ? `<button class="btn primary" id="end">${exam ? "Nộp bài" : "Xem kết quả"}</button>`
-                   : `<button class="btn ${revealed ? "primary" : ""}" id="next">Tiếp →</button>`}
+          <button class="btn" id="prev" ${prevLocked ? "disabled" : ""}>← Trước</button>
+          ${lockNav ? `<button class="btn ghost small" id="skip" title="Đề thật không có nút này">Bỏ qua đoạn nghe ⏭</button>` :
+            isLast ? `<button class="btn primary" id="end">${exam ? "Nộp bài" : "Xem kết quả"}</button>`
+                   : `<button class="btn ${revealed ? "primary" : ""}" id="next" ${nextLocked ? "disabled" : ""}>Tiếp →</button>`}
         </div>
       </section>
 
@@ -310,7 +449,7 @@
           let cls = "";
           if (a !== undefined) cls = exam ? "done" : (a === f.q.a ? "ok" : "bad");
           if (f.gi === S.cur) cls += " cur";
-          return `<button class="${cls}" data-jump="${f.gi}">${f.num}</button>`;
+          return `<button class="${cls}" data-jump="${f.gi}" ${canGoTo(f.gi) ? "" : "disabled"}>${f.num}</button>`;
         }).join("")}</div>
       </section>`;
 
@@ -319,26 +458,32 @@
     $("#submit").onclick = () => finish(true);
     if ($("#prev")) $("#prev").onclick = () => go(S.cur - 1);
     if ($("#next")) $("#next").onclick = () => go(S.cur + 1);
+    if ($("#skip")) $("#skip").onclick = () => { if (S.cur < S.groups.length - 1) go(S.cur + 1); else finish(true); };
     if ($("#end")) $("#end").onclick = () => finish(true);
-    if ($("#play")) $("#play").onclick = () => tts.play(audioLines(g));
-    if ($("#stop")) $("#stop").onclick = () => tts.stop();
+    if ($("#play")) $("#play").onclick = playCurrent;
+    if ($("#stop")) $("#stop").onclick = () => { tts.stop(); const st = $("#audioStatus"); if (st) st.textContent = ""; };
     $app.querySelectorAll("[data-jump]").forEach(b => b.onclick = () => go(+b.dataset.jump));
     $app.querySelectorAll("[data-opt]").forEach(b => b.onclick = () => choose(g, +b.dataset.q, +b.dataset.opt));
-    window.scrollTo({ top: 0, behavior: "smooth" });
-    if (P.skill === "L" && !revealed) setTimeout(() => S && S.groups[S.cur] === g && tts.play(audioLines(g)), 350);
   }
 
   function renderTranscript() {
     const g = S.groups[S.cur];
     const el = document.getElementById("transcript");
-    if (!el || !g.script) return;
+    if (!el || !isL(g)) return;
     const show = S.mode !== "exam" && g.questions.every((_, i) => S.answers[qKey(g, i)] !== undefined);
-    el.innerHTML = show && g.script.length ? transcriptHTML(g) : "";
+    el.innerHTML = show ? transcriptHTML(g) : "";
   }
   function transcriptHTML(g) {
-    if (!g.script || !g.script.length) return "";
-    const who = { M: "Man", W: "Woman", N: "Narrator" };
-    return `<div class="transcript"><b class="small">📝 Transcript</b>${g.script.map(l => `<p><b>${who[l.s]}:</b> ${esc(l.t)}</p>`).join("")}</div>`;
+    const who = s => ({ M: "Man", W: "Woman", M2: "Man 2", W2: "Woman 2", Q: "Speaker 1" })[s] || s;
+    const lines = [];
+    if (g.part === 4) lines.push(...g.script.map(l => `<p>${esc(l.t)}</p>`));
+    else if (g.part === 3) lines.push(...g.script.map(l => `<p><b>${who(l.s)}:</b> ${esc(l.t)}</p>`));
+    else if (g.part === 2) lines.push(`<p><b>Q:</b> ${esc(g.script[0].t)}</p>`);
+    if (g.part <= 2) {
+      const q = g.questions[0];
+      lines.push(...q.o.map((o, i) => `<p><b>(${LETTERS[i]})</b> ${esc(o)}</p>`));
+    }
+    return lines.length ? `<div class="transcript"><b class="small">📝 Transcript</b>${lines.join("")}</div>` : "";
   }
 
   function renderQuestion(g, i, num) {
@@ -348,30 +493,40 @@
     const exam = S.mode === "exam";
     const reveal = !exam && a !== undefined;
     const showText = !q.hideText || reveal;
-    const qtext = q.hideText ? (reveal ? esc(q.q) : "<i class='muted'>(Nghe câu hỏi và chọn đáp án)</i>") : esc(q.q);
+    const qtext = g.part === 1 ? `<span class="muted">Nghe 4 câu mô tả và chọn câu đúng nhất.</span>`
+      : g.part === 2 ? (reveal ? esc(q.q) : "<span class='muted'>Nghe câu hỏi và 3 câu trả lời.</span>")
+      : esc(q.q);
     const opts = q.o.map((o, j) => {
       let cls = "";
       if (reveal) { if (j === q.a) cls = "correct"; else if (j === a) cls = "wrong"; }
       else if (a === j) cls = "sel";
-      const txt = q.audioOptions && !showText ? "" : esc(o);
-      return `<button class="opt ${cls}" data-q="${i}" data-opt="${j}" ${reveal ? "disabled" : ""}><span class="L">(${LETTERS[j]})</span><span>${txt}</span></button>`;
+      const txt = showText ? esc(o) : "";
+      return `<button class="opt ${cls} ${showText ? "" : "bare"}" data-q="${i}" data-opt="${j}" ${reveal ? "disabled" : ""}><span class="L">(${LETTERS[j]})</span><span>${txt}</span></button>`;
     }).join("");
     const exp = reveal ? `<div class="explain ${a === q.a ? "ok" : "bad"}">
         <b>${a === q.a ? "✅ Chính xác!" : `❌ Sai rồi – Đáp án đúng: (${LETTERS[q.a]}) ${esc(q.o[q.a])}`}</b>${esc(q.e)}</div>` : "";
-    return `<div class="q"><div class="qtext"><span class="qnum">${num}.</span>${qtext}</div><div class="opts">${opts}</div>${exp}</div>`;
+    return `<div class="q"><div class="qtext"><span class="qnum">${num}.</span>${qtext}</div><div class="opts ${showText ? "" : "row-opts"}">${opts}</div>${exp}</div>`;
   }
 
   function choose(g, i, j) {
     const key = qKey(g, i);
     if (S.mode !== "exam" && S.answers[key] !== undefined) return;
     S.answers[key] = j;
-    if (S.mode !== "exam") tts.stop();
     const scrollY = window.scrollY;
-    renderQuiz();
+    renderQuiz();                 // không dừng/phát lại âm thanh khi chọn đáp án
     window.scrollTo(0, scrollY);
   }
 
-  function go(i) { if (i < 0 || i >= S.groups.length) return; S.cur = i; renderQuiz(); }
+  function go(i) {
+    if (!S || i < 0 || i >= S.groups.length) return;
+    tts.stop();
+    S.cur = i;
+    renderQuiz();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    const g = S.groups[i];
+    const revealed = S.mode !== "exam" && g.questions.every((_, k) => S.answers[qKey(g, k)] !== undefined);
+    if (isL(g) && !revealed && !(S.sim && S.heard[i])) setTimeout(() => { if (S && S.cur === i) playCurrent(); }, 400);
+  }
 
   /* ---------------- FINISH / RESULT ---------------- */
   function finish(ask) {
@@ -458,9 +613,10 @@
         if (onlyBad && r.correct) return;
         let ctx = "";
         if (r.g !== lastG) {
+          if (r.g.img) ctx += `<img class="thumb" src="${esc(asset(r.g.img.src))}" alt="">`;
+          if (r.g.graphic) ctx += `<div class="graphic">${r.g.graphic}</div>`;
           if (r.g.passage) ctx += `<details><summary>Xem đoạn văn</summary><div class="passage" style="margin-top:8px">${r.g.passage}</div></details>`;
-          if (r.g.scene) ctx += `<div class="muted small">🖼️ ${r.g.scene.icon} ${esc(r.g.scene.desc)}</div>`;
-          if (r.g.script && r.g.script.length) ctx += `<details><summary>Xem transcript</summary>${transcriptHTML(r.g)}</details>`;
+          if (isL(r.g)) ctx += `<details ${r.g.part <= 2 ? "open" : ""}><summary>Xem transcript</summary>${transcriptHTML(r.g)}</details>`;
           lastG = r.g;
         }
         const cls = r.correct ? "ok" : r.answered ? "bad" : "skip";
@@ -495,7 +651,7 @@
 
   /* ---------------- WRONG LIST ---------------- */
   function renderWrong() {
-    const keys = getWrong();
+    const keys = getWrong().filter(k => BANK.some(g => g.id === k.split("#")[0]));
     $app.innerHTML = `<section class="card">
       <h1>Câu sai cần ôn</h1>
       <p class="muted">Những câu bạn làm sai sẽ được lưu ở đây. Làm đúng lại thì câu đó sẽ tự động được xóa khỏi danh sách.</p>
@@ -528,12 +684,13 @@
   /* ---------------- Keyboard ---------------- */
   document.addEventListener("keydown", e => {
     if (!S || S.finished || /input|select|textarea/i.test(e.target.tagName)) return;
-    if (e.key === "ArrowRight") go(S.cur + 1);
-    else if (e.key === "ArrowLeft") go(S.cur - 1);
-    else if (e.key === " " && PARTS[S.groups[S.cur].part].skill === "L") { e.preventDefault(); tts.play(audioLines(S.groups[S.cur])); }
-    else if (/^[a-d1-4]$/i.test(e.key) && S.groups[S.cur].questions.length === 1) {
+    const g = S.groups[S.cur];
+    if (e.key === "ArrowRight" && !(S.sim && isL(g))) go(S.cur + 1);
+    else if (e.key === "ArrowLeft" && S.cur > 0 && canGoTo(S.cur - 1)) go(S.cur - 1);
+    else if (e.key === " " && isL(g) && !S.sim) { e.preventDefault(); playCurrent(); }
+    else if (/^[a-d1-4]$/i.test(e.key) && g.questions.length === 1) {
       const j = /\d/.test(e.key) ? +e.key - 1 : e.key.toLowerCase().charCodeAt(0) - 97;
-      if (j < S.groups[S.cur].questions[0].o.length) choose(S.groups[S.cur], 0, j);
+      if (j < g.questions[0].o.length) choose(g, 0, j);
     }
   });
 

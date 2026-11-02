@@ -160,3 +160,19 @@ th, td { padding: 8px; border-bottom: 1px solid var(--line); text-align: left; }
 details summary { cursor: pointer; color: var(--primary); font-weight: 600; font-size: 14px; }
 .empty { text-align: center; padding: 40px 10px; color: var(--muted); }
 kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; }
+
+/* Part 1 photo, graphics (Part 3/4) */
+.photo { margin: 0 0 14px; text-align: center; }
+.photo img { max-width: 100%; max-height: 420px; border-radius: 12px; border: 1px solid var(--line); display: block; margin: 0 auto; }
+.photo figcaption { font-size: 11px; color: var(--muted); margin-top: 4px; }
+.thumb { max-width: 260px; width: 100%; border-radius: 8px; margin: 6px 0; display: block; }
+.graphic { display: flex; justify-content: center; margin: 0 0 14px; overflow-x: auto; }
+.gtable { border-collapse: collapse; min-width: 260px; width: auto; background: var(--card); border: 2px solid var(--text); font-size: 15px; }
+.gtable caption { font-weight: 800; padding: 6px; caption-side: top; }
+.gtable th, .gtable td { border: 1px solid var(--text); padding: 6px 12px; text-align: center; }
+.gtable th { background: var(--bg); }
+.row-opts { grid-template-columns: repeat(4, 1fr); }
+.opt.bare { justify-content: center; font-size: 18px; padding: 14px 8px; }
+.sim-opt { display: flex; align-items: flex-start; gap: 8px; font-size: 14px; color: var(--text); }
+.sim-opt input { margin-top: 4px; }
+.palette button:disabled { opacity: .35; cursor: not-allowed; }
