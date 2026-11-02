@@ -198,7 +198,7 @@
     $app.innerHTML = `
       <section class="card hero">
         <h1>Ôn thi TOEIC Listening & Reading</h1>
-        <p>${totalQ} câu hỏi theo đúng 7 Part của đề thi format mới. Mỗi câu đều có giải thích tiếng Việt.</p>
+        <p>${totalQ} câu tự biên soạn theo format TOEIC Listening &amp; Reading từ 2019. Mỗi câu có giải thích tiếng Việt, kể cả khi bạn chọn đúng. Đề đầy đủ được xáo mới mỗi lần, đúng số câu và dạng câu của đề thật.</p>
         <div class="stats" style="margin-top:14px">
           <div class="stat"><b>${totalQ}</b><span>Câu hỏi</span></div>
           <div class="stat"><b>${hist.length}</b><span>Lượt đã làm</span></div>
@@ -222,6 +222,17 @@
         <label class="check sim-opt" style="margin-top:12px"><input type="checkbox" id="sim" ${settings.sim ? "checked" : ""}>
           <span><b>Mô phỏng phần nghe như thi thật</b> (chế độ thi thử): mỗi đoạn chỉ phát <b>1 lần</b>, có người dẫn đọc số câu và đọc câu hỏi,
           chừa 5 giây (Part 1–2) / 8 giây mỗi câu (Part 3–4) rồi <b>tự chuyển</b>, không quay lại được.</span></label>
+      </section>
+
+      <section class="card">
+        <h2>Đề đầy đủ 200 câu</h2>
+        <p>Mỗi lần bấm sẽ rút một đề mới từ ngân hàng: đúng 7 part, cân bằng dạng câu Part 2 và Part 5, có hội thoại 3 người, câu hàm ý, biểu đồ, đoạn đơn / đôi / ba ở Part 7. Ảnh Part 1 là ảnh giấy phép tự do. Phần nghe đọc bằng giọng của trình duyệt từ lời thoại gốc, không phải băng đề thật.</p>
+        <div class="blueprint">
+          <span>Part 1 · 6</span><span>Part 2 · 25</span><span>Part 3 · 39</span><span>Part 4 · 30</span>
+          <span>Part 5 · 30</span><span>Part 6 · 16</span><span>Part 7 · 54</span>
+        </div>
+        <button class="btn primary big" id="fullStart">Làm đề đầy đủ 200 câu →</button>
+        <p class="muted small" style="margin:10px 0 0">Dùng cách làm bài phía trên. Luyện tập hiện giải thích ngay khi chọn đáp án. Thi thử tính 120 phút nếu bạn để thời gian ở chế độ tự động.</p>
       </section>
 
       <section class="card">
@@ -312,6 +323,28 @@
       store.set("settings", settings);
       startSession(buildGroups(settings.parts, settings.limit, settings.shuffle), settings.mode);
     };
+    $app.querySelector("#fullStart").onclick = startFull;
+  }
+
+  function startFull() {
+    const modeBtn = $app.querySelector(".mode.active");
+    if (modeBtn) settings.mode = modeBtn.dataset.mode;
+    const sim = $app.querySelector("#sim");
+    if (sim) settings.sim = sim.checked;
+    const minutes = $app.querySelector("#minutes");
+    if (minutes) settings.minutes = +minutes.value;
+    const shuffleBox = $app.querySelector("#shuffle");
+    if (shuffleBox) settings.shuffle = shuffleBox.checked;
+    const rate = $app.querySelector("#rate");
+    if (rate) { tts.rate = +rate.value; store.set("rate", tts.rate); }
+    store.set("settings", settings);
+    if (typeof buildOfficialExam !== "function") { alert("Không tải được bộ ghép đề."); return; }
+    const paper = buildOfficialExam(BANK, settings.shuffle !== false);
+    if (!paper || paper.stats.total !== 200) {
+      alert("Ngân hàng chưa ghép đủ 200 câu. Hãy tải lại trang.");
+      return;
+    }
+    startSession(paper.groups, settings.mode, "Đề đầy đủ 200 câu", { minutes: settings.minutes || 120 });
   }
 
   function buildGroups(parts, limit, doShuffle) {
@@ -349,7 +382,7 @@
     return { ...q, o: perm.map(i => q.o[i]), a: newOf[q.a], e };
   }
 
-  function startSession(groups, mode, label) {
+  function startSession(groups, mode, label, opts) {
     stopSession();
     if (!groups.length) { alert("Không có câu hỏi nào."); return; }
     groups = groups.map(g => ({ ...g, questions: g.questions.map(q => shuffleOptions(q._base || q)).map((q, i) => ({ ...q, _base: g.questions[i]._base || g.questions[i] })) }));
@@ -357,9 +390,10 @@
     groups.forEach((g, gi) => g.questions.forEach((q, qi) => flat.push({ g, gi, qi, q, key: qKey(g, qi), num: flat.length + 1 })));
     let seconds = 0;
     if (mode === "exam") {
-      // Đề thật: Listening ≈ 45 phút/100 câu (theo băng), Reading 75 phút/100 câu
+      // Đề đủ 200 câu: 120 phút. Đề rút gọn: Listening ≈ 30 giây/câu, Reading ≈ 45 giây/câu.
       seconds = settings.minutes ? settings.minutes * 60
-        : Math.ceil(flat.reduce((t, f) => t + (isL(f.g) ? 30 : 45), 0) / 60) * 60;
+        : (opts && opts.minutes ? opts.minutes * 60
+        : Math.ceil(flat.reduce((t, f) => t + (isL(f.g) ? 30 : 45), 0) / 60) * 60);
     }
     const sim = mode === "exam" && settings.sim && tts.supported;
     S = { mode, sim, groups, flat, answers: {}, cur: 0, finished: false, seconds, left: seconds, start: Date.now(), label: label || "", heard: {} };
@@ -590,6 +624,7 @@
         <table style="margin-top:10px"><tr><th>Phần</th><th>Đúng</th><th>Tỉ lệ</th></tr>${partRows}</table>
         <div class="row" style="margin-top:16px">
           <button class="btn primary" id="again">Làm lại đề này</button>
+          ${S.label && S.label.indexOf("Đề đầy đủ") === 0 ? `<button class="btn" id="newPaper">Xáo một đề 200 câu khác</button>` : ""}
           ${results.some(r => !r.correct) ? `<button class="btn" id="retryWrong">Luyện lại câu sai (${results.filter(r => !r.correct).length})</button>` : ""}
           <button class="btn" data-nav="home">Về trang chủ</button>
         </div>
@@ -631,7 +666,9 @@
     };
     renderReview(mode === "exam" ? false : true);
     $app.querySelectorAll("[data-filter]").forEach(b => b.onclick = () => renderReview(b.dataset.filter === "bad"));
-    $app.querySelector("#again").onclick = () => startSession(groupsSnapshot, mode);
+    $app.querySelector("#again").onclick = () => startSession(groupsSnapshot, mode, S.label, S.label && S.label.indexOf("Đề đầy đủ") === 0 ? { minutes: settings.minutes || 120 } : null);
+    const newPaper = $app.querySelector("#newPaper");
+    if (newPaper) newPaper.onclick = () => startFull();
     const rw = $app.querySelector("#retryWrong");
     if (rw) rw.onclick = () => startSession(groupsFromKeys(results.filter(r => !r.correct).map(r => r.key)), "practice", "Luyện câu sai");
     window.scrollTo({ top: 0 });
