@@ -16,6 +16,10 @@ Web app tĩnh (HTML/CSS/JS thuần, không cần cài đặt hay build) để ô
 
 ## Chạy
 
+**Cách nhanh nhất:** tải file `toeic-app.html` (đã gộp sẵn tất cả) về máy/điện thoại rồi mở bằng trình duyệt – không cần host, chạy offline (phần nghe dùng giọng đọc của máy).
+Sau khi sửa câu hỏi, chạy `python3 build.py` để tạo lại file này.
+
+
 Mở `index.html` trực tiếp bằng trình duyệt, hoặc:
 
 ```bash
